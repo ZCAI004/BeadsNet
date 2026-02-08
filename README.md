@@ -1,16 +1,24 @@
-# remote-painter
- 
-This is a web-sockets with socket.io multi-user drawing example. 
+# Beads Net (Network Pegboard Demo)
 
-The live example can be seen on [Render](https://render.com/): [https://remote-painter.onrender.com/](https://remote-painter.onrender.com/)
+A simple real-time, networked “perler bead / pegboard” wall built with **p5.js + Node.js + Socket.IO**.  
+Multiple devices can connect and place colored tiles on a shared grid.
 
+## Features
+- 32-color palette (tap to select)
+- Real-time sync across clients (WebSockets via Socket.IO)
+- Mobile support (touch to place)
+- Optional tilt control on iOS (Enable Tilt button)
 
-## To test locally:
+## Controls
+**Desktop**
+- Click to place a tile
+- Use the left panel to pick a color
 
-Once you have downloaded or cloned the repo. In VS Code open the terminal, make sure you are in the root directory (you can run the command `pwd` to double check).
+**Mobile**
+- Tap to place a tile
+- Tap **Enable Tilt** (iOS permission required) to move the cursor by tilting the phone
 
-1. Run `npm install`
-
-2. Run `node app.js` to start the server
-
-3. You will then need to go to http://localhost:3000/ in your browser window(s) to test the multiplayer functionality locally on your machine. Optionally, specify a port by supplying the `port` variable in app.js. `process.env.PORT` variable will be used instead when available (e.g. on Render.com).
+## Run locally
+```bash
+npm install
+node app.js
