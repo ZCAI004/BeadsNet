@@ -1,9 +1,6 @@
-/*eslint no-undef: 0*/
 const socket = io();
 
-// =======================
 // Base grid (desktop target)
-// =======================
 const BASE_COLS = 64;
 const BASE_ROWS = 36;
 
@@ -12,7 +9,7 @@ let COLS = BASE_COLS;
 let ROWS = BASE_ROWS;
 
 // Increase this to make tiles bigger on iPhone
-const MIN_CELL_PX = 16; // try 14 / 16 / 18 / 20
+const MIN_CELL_PX = 16;
 
 // Board metrics
 let cellSize = 10;
@@ -27,31 +24,25 @@ const grid = new Map(); // "x,y" -> { r, g, b }
 // Persistent offscreen layer for grid + painted cells
 let boardLayer;
 
-// =======================
 // Palette (32 colors)
-// =======================
 const PALETTE = [
-  "#000000","#1b1b1b","#4d4d4d","#8e8e93","#c7c7cc","#ffffff",
-  "#7f1d1d","#ef4444","#fb7185","#be123c",
-  "#7c2d12","#f97316","#fb923c","#f59e0b",
-  "#78350f","#facc15","#fde047","#fff7b2",
-  "#14532d","#22c55e","#86efac","#064e3b",
-  "#065f46","#14b8a6","#5eead4","#0f766e",
-  "#1e3a8a","#3b82f6","#93c5fd","#0ea5e9",
-  "#312e81","#8b5cf6"
+  "#000000","#1b1b1b","#4d4d4d","#8e8e93",
+  "#c7c7cc","#ffffff","#7f1d1d","#ef4444",
+  "#fb7185","#be123c","#7c2d12","#f97316",
+  "#fb923c","#f59e0b","#78350f","#facc15",
+  "#fde047","#fff7b2","#14532d","#22c55e",
+  "#86efac","#064e3b","#065f46","#14b8a6",
+  "#5eead4","#0f766e","#1e3a8a","#3b82f6",
+  "#93c5fd","#0ea5e9","#312e81","#8b5cf6"
 ];
 
 let currentHex = PALETTE[7];
 let currentColor = hexToRgb(currentHex);
 
-// =======================
 // UI refs
-// =======================
 let guiEl, toggleBtnEl, statusEl, paletteEl, motionBtnEl;
 
-// =======================
 // Mobile sensors (tilt only)
-// =======================
 let sensorsEnabled = false;
 
 // Cursor in grid coordinates
@@ -67,9 +58,7 @@ let lastMoveTime = 0;
 const MOVE_INTERVAL_MS = 120;
 const TILT_DEADZONE = 10;
 
-// =====================================================
 // p5 setup/draw
-// =====================================================
 function setup() {
   const canvas = createCanvas(windowWidth, windowHeight);
   canvas.parent("sketch-container");
@@ -99,11 +88,9 @@ function draw() {
   }
 }
 
-// =====================================================
 // Adaptive grid sizing (keeps tiles readable on iPhone)
-// =====================================================
 function chooseGridForScreen() {
-  const aspect = BASE_COLS / BASE_ROWS; // ~1.777...
+  const aspect = BASE_COLS / BASE_ROWS;
 
   // How many cells can fit if each cell is at least MIN_CELL_PX?
   const maxCols = Math.max(10, Math.floor(width / MIN_CELL_PX));
@@ -155,9 +142,7 @@ function isValidCell(gx, gy) {
   return gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS;
 }
 
-// =====================================================
 // Interaction: place a bead
-// =====================================================
 function mousePressed() {
   if (isEventOnGUI(mouseX, mouseY)) return;
 
@@ -199,9 +184,7 @@ function placeAtCell(gx, gy) {
   socket.emit("place", { gx, gy, r, g, b });
 }
 
-// =====================================================
 // Rendering: persistent layer (boardLayer)
-// =====================================================
 function paintCell(gx, gy, r, g, b) {
   grid.set(`${gx},${gy}`, { r, g, b });
 
@@ -267,9 +250,7 @@ function drawCursor() {
   pop();
 }
 
-// =====================================================
 // Socket events
-// =====================================================
 socket.on("place", (data) => {
   paintCell(data.gx, data.gy, data.r, data.g, data.b);
 });
@@ -277,9 +258,7 @@ socket.on("place", (data) => {
 socket.on("connect", () => console.log("connected:", socket.id));
 socket.on("disconnect", () => console.log("disconnected"));
 
-// =====================================================
 // Resize handling
-// =====================================================
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 
@@ -291,9 +270,7 @@ function windowResized() {
   redrawBoardLayer();
 }
 
-// =====================================================
 // UI construction
-// =====================================================
 function setupUI() {
   guiEl = document.getElementById("gui-container");
   if (!guiEl) return;
@@ -423,9 +400,7 @@ function isEventOnGUI(px, py) {
   return guiEl.contains(el);
 }
 
-// =====================================================
 // Motion permission + sensors (tilt only)
-// =====================================================
 async function requestMotionPermission() {
   try {
     // Some iOS versions gate motion permission here
@@ -485,9 +460,7 @@ function stepCursorByTilt() {
   lastMoveTime = now;
 }
 
-// =====================================================
 // Utils
-// =====================================================
 function hexToRgb(hex) {
   const h = hex.replace("#", "");
   const r = parseInt(h.substring(0, 2), 16);
