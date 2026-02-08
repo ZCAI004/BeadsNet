@@ -1,23 +1,35 @@
 /*eslint no-undef: 0*/
 const socket = io();
 
-// ===== Grid =====
-const COLS = 64;
-const ROWS = 36;
+// =======================
+// Base grid (desktop target)
+// =======================
+const BASE_COLS = 64;
+const BASE_ROWS = 36;
 
-// Use square-ish cells on mobile to avoid "squeezed" tiles
+// Adaptive grid for current screen
+let COLS = BASE_COLS;
+let ROWS = BASE_ROWS;
+
+// IMPORTANT: increase this to make the grid tiles bigger on iPhone
+const MIN_CELL_PX = 16; // try 14 / 16 / 18 / 20
+
+// Board metrics
 let cellSize = 10;
 let boardW = 0;
 let boardH = 0;
-let boardOX = 0; // board offset X (centered)
-let boardOY = 0; // board offset Y (centered)
+let boardOX = 0;
+let boardOY = 0;
 
+// Store painted cells
 const grid = new Map(); // "x,y" -> { r, g, b }
 
-// ===== Cursor overlay (no trails) =====
+// Overlay for cursor (to avoid trails)
 let overlay;
 
-// ===== Palette (32 colors) =====
+// =======================
+// Palette (32 colors)
+// =======================
 const PALETTE = [
   "#000000","#1b1b1b","#4d4d4d","#8e8e93","#c7c7cc","#ffffff",
   "#7f1d1d","#ef4444","#fb7185","#be123c",
@@ -32,15 +44,19 @@ const PALETTE = [
 let currentHex = PALETTE[7];
 let currentColor = hexToRgb(currentHex);
 
-// ===== UI refs =====
+// =======================
+// UI refs
+// =======================
 let guiEl, toggleBtnEl, statusEl, paletteEl, motionBtnEl;
 
-// ===== Mobile sensors =====
+// =======================
+// Mobile sensors
+// =======================
 let sensorsEnabled = false;
 
-// Cursor position in grid coords
-let cursorGX = Math.floor(COLS / 2);
-let cursorGY = Math.floor(ROWS / 2);
+// Cursor in grid coordinates
+let cursorGX = Math.floor(BASE_COLS / 2);
+let cursorGY = Math.floor(BASE_ROWS / 2);
 
 // DeviceOrientation tilt values
 let tiltGamma = 0; // left-right
@@ -56,6 +72,9 @@ let lastShakeTime = 0;
 const SHAKE_COOLDOWN_MS = 700;
 const SHAKE_THRESHOLD = 17;
 
+// =====================================================
+// p5 setup/draw
+// =====================================================
 function setup() {
   const canvas = createCanvas(windowWidth, windowHeight);
   canvas.parent("sketch-container");
@@ -77,8 +96,6 @@ function draw() {
   // Clear + redraw cursor on overlay only (no trails)
   overlay.clear();
   drawCursorOverlay();
-
-  // Draw overlay on top of main canvas
   image(overlay, 0, 0);
 
   if (sensorsEnabled) {
@@ -86,8 +103,51 @@ function draw() {
   }
 }
 
-// ===== Input helpers =====
-// Convert a canvas point (px, py) to a grid cell (gx, gy) considering board offsets
+// =====================================================
+// Adaptive grid sizing (solves "grid too small on iPhone")
+// =====================================================
+function chooseGridForScreen() {
+  const aspect = BASE_COLS / BASE_ROWS; // ~1.777...
+
+  // How many cells can fit if each cell is at least MIN_CELL_PX?
+  const maxCols = Math.max(10, Math.floor(width / MIN_CELL_PX));
+  const maxRows = Math.max(10, Math.floor(height / MIN_CELL_PX));
+
+  // Start from base, clamp down by columns
+  let cols = Math.min(BASE_COLS, maxCols);
+  let rows = Math.floor(cols / aspect);
+
+  // If rows don't fit, clamp by rows instead
+  if (rows > maxRows) {
+    rows = Math.min(BASE_ROWS, maxRows);
+    cols = Math.floor(rows * aspect);
+  }
+
+  COLS = Math.max(10, cols);
+  ROWS = Math.max(10, rows);
+}
+
+function updateBoardMetrics() {
+  // Pick a grid that keeps cells readable on small screens
+  chooseGridForScreen();
+
+  // Compute uniform (square) cell size
+  cellSize = Math.floor(Math.min(width / COLS, height / ROWS));
+  cellSize = Math.max(cellSize, MIN_CELL_PX);
+
+  boardW = cellSize * COLS;
+  boardH = cellSize * ROWS;
+
+  // Center the board
+  boardOX = Math.floor((width - boardW) / 2);
+  boardOY = Math.floor((height - boardH) / 2);
+
+  // Keep cursor inside bounds after resize / grid change
+  cursorGX = constrain(cursorGX, 0, COLS - 1);
+  cursorGY = constrain(cursorGY, 0, ROWS - 1);
+}
+
+// Convert a point on canvas to a grid cell
 function pointToGrid(px, py) {
   const x = px - boardOX;
   const y = py - boardOY;
@@ -96,14 +156,13 @@ function pointToGrid(px, py) {
   return { gx, gy };
 }
 
-// Check if a grid cell is inside board
 function isValidCell(gx, gy) {
   return gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS;
 }
 
-// ===== Interaction =====
-// Desktop: click places at pointer.
-// Sensor mode: tap places at cursor.
+// =====================================================
+// Interaction: place a bead
+// =====================================================
 function mousePressed() {
   if (isEventOnGUI(mouseX, mouseY)) return;
 
@@ -116,7 +175,7 @@ function mousePressed() {
 }
 
 function touchStarted() {
-  // Use touches[0] for iOS reliability
+  // Use touches[0] for better iOS reliability
   const t = (touches && touches.length > 0) ? touches[0] : null;
   const tx = t ? t.x : touchX;
   const ty = t ? t.y : touchY;
@@ -145,12 +204,13 @@ function placeAtCell(gx, gy) {
   socket.emit("place", { gx, gy, r, g, b });
 }
 
-// ===== Rendering =====
+// =====================================================
+// Rendering
+// =====================================================
 function paintCell(gx, gy, r, g, b) {
   grid.set(`${gx},${gy}`, { r, g, b });
 
   fill(r, g, b);
-  // Small inset to mimic pegboard gaps
   rect(
     boardOX + gx * cellSize + 1,
     boardOY + gy * cellSize + 1,
@@ -164,12 +224,10 @@ function drawGridLines() {
   stroke(220);
   strokeWeight(1);
 
-  // Vertical
   for (let x = 0; x <= COLS; x++) {
     const px = boardOX + x * cellSize;
     line(px, boardOY, px, boardOY + boardH);
   }
-  // Horizontal
   for (let y = 0; y <= ROWS; y++) {
     const py = boardOY + y * cellSize;
     line(boardOX, py, boardOX + boardW, py);
@@ -179,10 +237,9 @@ function drawGridLines() {
 }
 
 function drawCursorOverlay() {
-  // Draw cursor as a clean outline on overlay buffer
   overlay.push();
   overlay.noFill();
-  overlay.stroke(0, 120);
+  overlay.stroke(0, 140);
   overlay.strokeWeight(3);
   overlay.rect(
     boardOX + cursorGX * cellSize + 1,
@@ -206,20 +263,9 @@ function redrawAllCells() {
   }
 }
 
-function updateBoardMetrics() {
-  // Choose a uniform cell size so tiles are not squeezed on mobile
-  cellSize = Math.floor(Math.min(width / COLS, height / ROWS));
-  cellSize = Math.max(cellSize, 4); // safety
-
-  boardW = cellSize * COLS;
-  boardH = cellSize * ROWS;
-
-  // Center the board
-  boardOX = Math.floor((width - boardW) / 2);
-  boardOY = Math.floor((height - boardH) / 2);
-}
-
-// ===== Socket events =====
+// =====================================================
+// Socket events
+// =====================================================
 socket.on("place", (data) => {
   paintCell(data.gx, data.gy, data.r, data.g, data.b);
 });
@@ -227,7 +273,9 @@ socket.on("place", (data) => {
 socket.on("connect", () => console.log("connected:", socket.id));
 socket.on("disconnect", () => console.log("disconnected"));
 
-// ===== Resize =====
+// =====================================================
+// Resize handling
+// =====================================================
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
 
@@ -241,7 +289,9 @@ function windowResized() {
   redrawAllCells();
 }
 
-// ===== UI =====
+// =====================================================
+// UI construction
+// =====================================================
 function setupUI() {
   guiEl = document.getElementById("gui-container");
   if (!guiEl) return;
@@ -249,7 +299,7 @@ function setupUI() {
   guiEl.classList.add("open");
   guiEl.innerHTML = "";
 
-  // Toggle button (CSS class .button)
+  // Toggle panel button (uses your CSS .button)
   toggleBtnEl = document.createElement("button");
   toggleBtnEl.className = "button";
   toggleBtnEl.textContent = ">";
@@ -306,7 +356,7 @@ function setupUI() {
   paletteEl.style.gridTemplateColumns = "repeat(8, 1fr)";
   paletteEl.style.gap = "6px";
 
-  PALETTE.forEach((hex, idx) => {
+  PALETTE.forEach((hex) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.style.height = "28px";
@@ -327,7 +377,6 @@ function setupUI() {
 
       setCurrentColor(hex);
 
-      // Update outline highlights
       Array.from(paletteEl.children).forEach((child) => (child.style.outline = "none"));
       btn.style.outline = "2px solid rgba(0,0,0,0.6)";
       btn.style.outlineOffset = "1px";
@@ -363,17 +412,13 @@ function randomizeColorFromPalette() {
   }
 }
 
-// ===== IMPORTANT FIX =====
-// Detect if the user tapped/clicked on ANY GUI element (including the toggle button that sticks out).
-// We do this by checking the DOM element at the click position.
+// Treat any tap/click on DOM inside #gui-container as GUI interaction
 function isEventOnGUI(px, py) {
   if (!guiEl) return false;
 
-  // Convert p5 canvas coords to viewport (client) coords
-  // Since canvas is fullscreen, px/py usually match client coords,
-  // but this keeps it correct if your layout changes.
   const c = document.querySelector("canvas");
   if (!c) return false;
+
   const rect = c.getBoundingClientRect();
   const clientX = rect.left + px;
   const clientY = rect.top + py;
@@ -381,11 +426,12 @@ function isEventOnGUI(px, py) {
   const el = document.elementFromPoint(clientX, clientY);
   if (!el) return false;
 
-  // If the clicked element is inside gui-container, treat as GUI
   return guiEl.contains(el);
 }
 
-// ===== Motion permission + sensors =====
+// =====================================================
+// Motion permission + sensors
+// =====================================================
 async function requestMotionPermission() {
   try {
     if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
@@ -462,7 +508,9 @@ function onDeviceMotion(e) {
   }
 }
 
-// ===== Utils =====
+// =====================================================
+// Utils
+// =====================================================
 function hexToRgb(hex) {
   const h = hex.replace("#", "");
   const r = parseInt(h.substring(0, 2), 16);
