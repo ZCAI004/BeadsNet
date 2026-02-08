@@ -1,58 +1,70 @@
 /*eslint no-undef: 0*/
 const socket = io();
 
-// Grid
+// ===== Grid =====
 const COLS = 64;
 const ROWS = 36;
-let cellW, cellH;
-const grid = new Map(); // "x,y" -> {r,g,b}
 
-// Palette
+// Use square-ish cells on mobile to avoid "squeezed" tiles
+let cellSize = 10;
+let boardW = 0;
+let boardH = 0;
+let boardOX = 0; // board offset X (centered)
+let boardOY = 0; // board offset Y (centered)
+
+const grid = new Map(); // "x,y" -> { r, g, b }
+
+// ===== Cursor overlay (no trails) =====
+let overlay;
+
+// ===== Palette (32 colors) =====
 const PALETTE = [
-  "#000000","#1b1b1b","#4d4d4d","#8e8e93",
-  "#c7c7cc","#ffffff","#7f1d1d","#ef4444",
-  "#fb7185","#be123c","#7c2d12","#f97316",
-  "#fb923c","#f59e0b","#78350f","#facc15",
-  "#fde047","#fff7b2","#14532d","#22c55e",
-  "#86efac","#064e3b","#065f46","#14b8a6",
-  "#5eead4","#0f766e","#1e3a8a","#3b82f6",
-  "#93c5fd","#0ea5e9","#312e81","#8b5cf6"
+  "#000000","#1b1b1b","#4d4d4d","#8e8e93","#c7c7cc","#ffffff",
+  "#7f1d1d","#ef4444","#fb7185","#be123c",
+  "#7c2d12","#f97316","#fb923c","#f59e0b",
+  "#78350f","#facc15","#fde047","#fff7b2",
+  "#14532d","#22c55e","#86efac","#064e3b",
+  "#065f46","#14b8a6","#5eead4","#0f766e",
+  "#1e3a8a","#3b82f6","#93c5fd","#0ea5e9",
+  "#312e81","#8b5cf6"
 ];
 
 let currentHex = PALETTE[7];
 let currentColor = hexToRgb(currentHex);
 
-// UI
-let guiEl, toggleBtnEl, statusEl, paletteEl;
-let motionBtnEl;
+// ===== UI refs =====
+let guiEl, toggleBtnEl, statusEl, paletteEl, motionBtnEl;
 
-// Mobile sensors
+// ===== Mobile sensors =====
 let sensorsEnabled = false;
 
-// cursor in grid coords
+// Cursor position in grid coords
 let cursorGX = Math.floor(COLS / 2);
 let cursorGY = Math.floor(ROWS / 2);
 
-// tilt values (DeviceOrientation)
+// DeviceOrientation tilt values
 let tiltGamma = 0; // left-right
 let tiltBeta = 0;  // front-back
 
-// move rate limiting (so it steps grid nicely)
+// Movement rate limiting
 let lastMoveTime = 0;
-const MOVE_INTERVAL_MS = 120; // lower = faster movement
-const TILT_DEADZONE = 10;     // degrees
+const MOVE_INTERVAL_MS = 120;
+const TILT_DEADZONE = 10;
 
-// shake detection (DeviceMotion)
+// Shake detection
 let lastShakeTime = 0;
 const SHAKE_COOLDOWN_MS = 700;
-const SHAKE_THRESHOLD = 17; // tune: 14-22 typical
+const SHAKE_THRESHOLD = 17;
 
 function setup() {
   const canvas = createCanvas(windowWidth, windowHeight);
   canvas.parent("sketch-container");
 
   noStroke();
-  updateCellSize();
+  updateBoardMetrics();
+
+  overlay = createGraphics(windowWidth, windowHeight);
+  overlay.clear();
 
   setupUI();
 
@@ -62,95 +74,152 @@ function setup() {
 }
 
 function draw() {
-  // Draw cursor overlay
+  // Clear + redraw cursor on overlay only (no trails)
+  overlay.clear();
   drawCursorOverlay();
 
-  // If sensors are enabled, move the cursor by tilt
+  // Draw overlay on top of main canvas
+  image(overlay, 0, 0);
+
   if (sensorsEnabled) {
     stepCursorByTilt();
   }
 }
 
-// Interaction
+// ===== Input helpers =====
+// Convert a canvas point (px, py) to a grid cell (gx, gy) considering board offsets
+function pointToGrid(px, py) {
+  const x = px - boardOX;
+  const y = py - boardOY;
+  const gx = Math.floor(x / cellSize);
+  const gy = Math.floor(y / cellSize);
+  return { gx, gy };
+}
+
+// Check if a grid cell is inside board
+function isValidCell(gx, gy) {
+  return gx >= 0 && gx < COLS && gy >= 0 && gy < ROWS;
+}
+
+// ===== Interaction =====
 // Desktop: click places at pointer.
-// Mobile: tapping places at cursor (more consistent for sensor control).
+// Sensor mode: tap places at cursor.
 function mousePressed() {
-  if (isPointInsideOpenGUI(mouseX, mouseY)) return;
+  if (isEventOnGUI(mouseX, mouseY)) return;
 
   if (sensorsEnabled) {
     placeAtCell(cursorGX, cursorGY);
   } else {
-    const gx = floor(mouseX / cellW);
-    const gy = floor(mouseY / cellH);
+    const { gx, gy } = pointToGrid(mouseX, mouseY);
     placeAtCell(gx, gy);
   }
 }
 
 function touchStarted() {
-  if (isPointInsideOpenGUI(touchX, touchY)) return false;
+  // Use touches[0] for iOS reliability
+  const t = (touches && touches.length > 0) ? touches[0] : null;
+  const tx = t ? t.x : touchX;
+  const ty = t ? t.y : touchY;
+
+  if (isEventOnGUI(tx, ty)) return false;
 
   if (sensorsEnabled) {
     placeAtCell(cursorGX, cursorGY);
   } else {
-    const gx = floor(touchX / cellW);
-    const gy = floor(touchY / cellH);
+    const { gx, gy } = pointToGrid(tx, ty);
     placeAtCell(gx, gy);
   }
-  return false;
+
+  return false; // prevent scroll
 }
 
 function placeAtCell(gx, gy) {
-  if (gx < 0 || gx >= COLS || gy < 0 || gy >= ROWS) return;
+  if (!isValidCell(gx, gy)) return;
 
   const { r, g, b } = currentColor;
+
+  // Local paint first
   paintCell(gx, gy, r, g, b);
+
+  // Sync to others
   socket.emit("place", { gx, gy, r, g, b });
 }
 
-// Rendering
+// ===== Rendering =====
 function paintCell(gx, gy, r, g, b) {
   grid.set(`${gx},${gy}`, { r, g, b });
 
-  // Leave a small gap to mimic a pegboard feel
   fill(r, g, b);
-  rect(gx * cellW + 1, gy * cellH + 1, cellW - 2, cellH - 2);
+  // Small inset to mimic pegboard gaps
+  rect(
+    boardOX + gx * cellSize + 1,
+    boardOY + gy * cellSize + 1,
+    cellSize - 2,
+    cellSize - 2
+  );
 }
 
 function drawGridLines() {
   push();
   stroke(220);
   strokeWeight(1);
-  for (let x = 0; x <= COLS; x++) line(x * cellW, 0, x * cellW, height);
-  for (let y = 0; y <= ROWS; y++) line(0, y * cellH, width, y * cellH);
+
+  // Vertical
+  for (let x = 0; x <= COLS; x++) {
+    const px = boardOX + x * cellSize;
+    line(px, boardOY, px, boardOY + boardH);
+  }
+  // Horizontal
+  for (let y = 0; y <= ROWS; y++) {
+    const py = boardOY + y * cellSize;
+    line(boardOX, py, boardOX + boardW, py);
+  }
+
   pop();
 }
 
 function drawCursorOverlay() {
-  // This draws a semi-transparent outline every frame.
-  // It may leave a subtle trail. If you want a perfectly clean cursor,
-  // use a separate overlay graphics buffer (createGraphics) for the cursor layer.
-  push();
-  noFill();
-  stroke(0, 80);
-  strokeWeight(2);
-  rect(cursorGX * cellW + 1, cursorGY * cellH + 1, cellW - 2, cellH - 2);
-  pop();
-}
-
-function updateCellSize() {
-  cellW = width / COLS;
-  cellH = height / ROWS;
+  // Draw cursor as a clean outline on overlay buffer
+  overlay.push();
+  overlay.noFill();
+  overlay.stroke(0, 120);
+  overlay.strokeWeight(3);
+  overlay.rect(
+    boardOX + cursorGX * cellSize + 1,
+    boardOY + cursorGY * cellSize + 1,
+    cellSize - 2,
+    cellSize - 2
+  );
+  overlay.pop();
 }
 
 function redrawAllCells() {
   for (const [key, c] of grid.entries()) {
     const [gx, gy] = key.split(",").map(Number);
     fill(c.r, c.g, c.b);
-    rect(gx * cellW + 1, gy * cellH + 1, cellW - 2, cellH - 2);
+    rect(
+      boardOX + gx * cellSize + 1,
+      boardOY + gy * cellSize + 1,
+      cellSize - 2,
+      cellSize - 2
+    );
   }
 }
 
-// Socket
+function updateBoardMetrics() {
+  // Choose a uniform cell size so tiles are not squeezed on mobile
+  cellSize = Math.floor(Math.min(width / COLS, height / ROWS));
+  cellSize = Math.max(cellSize, 4); // safety
+
+  boardW = cellSize * COLS;
+  boardH = cellSize * ROWS;
+
+  // Center the board
+  boardOX = Math.floor((width - boardW) / 2);
+  boardOY = Math.floor((height - boardH) / 2);
+}
+
+// ===== Socket events =====
 socket.on("place", (data) => {
   paintCell(data.gx, data.gy, data.r, data.g, data.b);
 });
@@ -158,44 +227,52 @@ socket.on("place", (data) => {
 socket.on("connect", () => console.log("connected:", socket.id));
 socket.on("disconnect", () => console.log("disconnected"));
 
-// Resize
+// ===== Resize =====
 function windowResized() {
   resizeCanvas(windowWidth, windowHeight);
-  updateCellSize();
+
+  updateBoardMetrics();
+
+  overlay = createGraphics(windowWidth, windowHeight);
+  overlay.clear();
+
   background(240);
   drawGridLines();
   redrawAllCells();
 }
 
-// UI Construction
+// ===== UI =====
 function setupUI() {
   guiEl = document.getElementById("gui-container");
   if (!guiEl) return;
 
   guiEl.classList.add("open");
-
-  // Keep motion button if present (from HTML), then rebuild rest
-  motionBtnEl = document.getElementById("motionBtn");
-
-  // Clear everything and rebuild cleanly:
   guiEl.innerHTML = "";
 
-  // Toggle
+  // Toggle button (CSS class .button)
   toggleBtnEl = document.createElement("button");
   toggleBtnEl.className = "button";
   toggleBtnEl.textContent = ">";
-  toggleBtnEl.addEventListener("click", () => guiEl.classList.toggle("open"));
+  toggleBtnEl.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    guiEl.classList.toggle("open");
+  });
   guiEl.appendChild(toggleBtnEl);
 
-  // Motion permission button
+  // Motion permission button (iOS)
   motionBtnEl = document.createElement("button");
   motionBtnEl.id = "motionBtn";
   motionBtnEl.className = "motion-btn";
   motionBtnEl.textContent = "Enable Motion";
-  motionBtnEl.addEventListener("click", requestMotionPermission);
+  motionBtnEl.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    requestMotionPermission();
+  });
   guiEl.appendChild(motionBtnEl);
 
-  // Status (current color)
+  // Status row
   statusEl = document.createElement("div");
   statusEl.style.marginTop = "12px";
   statusEl.style.fontFamily = "sans-serif";
@@ -229,7 +306,7 @@ function setupUI() {
   paletteEl.style.gridTemplateColumns = "repeat(8, 1fr)";
   paletteEl.style.gap = "6px";
 
-  PALETTE.forEach((hex) => {
+  PALETTE.forEach((hex, idx) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.style.height = "28px";
@@ -244,8 +321,13 @@ function setupUI() {
       btn.style.outlineOffset = "1px";
     }
 
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
       setCurrentColor(hex);
+
+      // Update outline highlights
       Array.from(paletteEl.children).forEach((child) => (child.style.outline = "none"));
       btn.style.outline = "2px solid rgba(0,0,0,0.6)";
       btn.style.outlineOffset = "1px";
@@ -260,6 +342,7 @@ function setupUI() {
 function setCurrentColor(hex) {
   currentHex = hex;
   currentColor = hexToRgb(hex);
+
   const swatch = document.getElementById("swatch");
   const label = document.getElementById("colorLabel");
   if (swatch) swatch.style.background = currentHex;
@@ -270,7 +353,6 @@ function randomizeColorFromPalette() {
   const idx = Math.floor(Math.random() * PALETTE.length);
   setCurrentColor(PALETTE[idx]);
 
-  // update outline highlight
   if (paletteEl) {
     Array.from(paletteEl.children).forEach((child) => (child.style.outline = "none"));
     const btn = paletteEl.children[idx];
@@ -281,18 +363,31 @@ function randomizeColorFromPalette() {
   }
 }
 
-// Prevent "tap UI also places a bead"
-function isPointInsideOpenGUI(px, py) {
+// ===== IMPORTANT FIX =====
+// Detect if the user tapped/clicked on ANY GUI element (including the toggle button that sticks out).
+// We do this by checking the DOM element at the click position.
+function isEventOnGUI(px, py) {
   if (!guiEl) return false;
-  if (!guiEl.classList.contains("open")) return false;
-  const rect = guiEl.getBoundingClientRect();
-  return px >= rect.left && px <= rect.right && py >= rect.top && py <= rect.bottom;
+
+  // Convert p5 canvas coords to viewport (client) coords
+  // Since canvas is fullscreen, px/py usually match client coords,
+  // but this keeps it correct if your layout changes.
+  const c = document.querySelector("canvas");
+  if (!c) return false;
+  const rect = c.getBoundingClientRect();
+  const clientX = rect.left + px;
+  const clientY = rect.top + py;
+
+  const el = document.elementFromPoint(clientX, clientY);
+  if (!el) return false;
+
+  // If the clicked element is inside gui-container, treat as GUI
+  return guiEl.contains(el);
 }
 
-// Motion permission + sensor handlers
+// ===== Motion permission + sensors =====
 async function requestMotionPermission() {
   try {
-    // iOS needs explicit permission for motion/orientation
     if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
       const res = await DeviceMotionEvent.requestPermission();
       if (res !== "granted") {
@@ -301,7 +396,6 @@ async function requestMotionPermission() {
       }
     }
 
-    // Some iOS versions also gate DeviceOrientation
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
       const res2 = await DeviceOrientationEvent.requestPermission();
       if (res2 !== "granted") {
@@ -327,7 +421,6 @@ function enableSensors() {
 }
 
 function onDeviceOrientation(e) {
-  // gamma: left-right [-90,90], beta: front-back [-180,180]
   if (typeof e.gamma === "number") tiltGamma = e.gamma;
   if (typeof e.beta === "number") tiltBeta = e.beta;
 }
@@ -353,7 +446,6 @@ function stepCursorByTilt() {
 }
 
 function onDeviceMotion(e) {
-  // shake detection using accelerationIncludingGravity magnitude
   const a = e.accelerationIncludingGravity || e.acceleration;
   if (!a) return;
 
@@ -370,7 +462,7 @@ function onDeviceMotion(e) {
   }
 }
 
-// Utils
+// ===== Utils =====
 function hexToRgb(hex) {
   const h = hex.replace("#", "");
   const r = parseInt(h.substring(0, 2), 16);
