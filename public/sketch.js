@@ -11,7 +11,7 @@ const BASE_ROWS = 36;
 let COLS = BASE_COLS;
 let ROWS = BASE_ROWS;
 
-// IMPORTANT: increase this to make the grid tiles bigger on iPhone
+// Increase this to make tiles bigger on iPhone
 const MIN_CELL_PX = 16; // try 14 / 16 / 18 / 20
 
 // Board metrics
@@ -24,8 +24,8 @@ let boardOY = 0;
 // Store painted cells
 const grid = new Map(); // "x,y" -> { r, g, b }
 
-// Overlay for cursor (to avoid trails)
-let overlay;
+// Persistent offscreen layer for grid + painted cells
+let boardLayer;
 
 // =======================
 // Palette (32 colors)
@@ -50,7 +50,7 @@ let currentColor = hexToRgb(currentHex);
 let guiEl, toggleBtnEl, statusEl, paletteEl, motionBtnEl;
 
 // =======================
-// Mobile sensors
+// Mobile sensors (tilt only)
 // =======================
 let sensorsEnabled = false;
 
@@ -67,11 +67,6 @@ let lastMoveTime = 0;
 const MOVE_INTERVAL_MS = 120;
 const TILT_DEADZONE = 10;
 
-// Shake detection
-let lastShakeTime = 0;
-const SHAKE_COOLDOWN_MS = 700;
-const SHAKE_THRESHOLD = 17;
-
 // =====================================================
 // p5 setup/draw
 // =====================================================
@@ -82,21 +77,22 @@ function setup() {
   noStroke();
   updateBoardMetrics();
 
-  overlay = createGraphics(windowWidth, windowHeight);
-  overlay.clear();
+  boardLayer = createGraphics(windowWidth, windowHeight);
+  boardLayer.noStroke();
+  redrawBoardLayer();
 
   setupUI();
-
-  background(240);
-  drawGridLines();
-  redrawAllCells();
 }
 
 function draw() {
-  // Clear + redraw cursor on overlay only (no trails)
-  overlay.clear();
-  drawCursorOverlay();
-  image(overlay, 0, 0);
+  // Clear main canvas each frame so cursor never "burns in"
+  clear();
+
+  // Draw the persistent board (grid + painted cells)
+  image(boardLayer, 0, 0);
+
+  // Draw cursor on top (not persistent)
+  drawCursor();
 
   if (sensorsEnabled) {
     stepCursorByTilt();
@@ -104,7 +100,7 @@ function draw() {
 }
 
 // =====================================================
-// Adaptive grid sizing (solves "grid too small on iPhone")
+// Adaptive grid sizing (keeps tiles readable on iPhone)
 // =====================================================
 function chooseGridForScreen() {
   const aspect = BASE_COLS / BASE_ROWS; // ~1.777...
@@ -128,7 +124,6 @@ function chooseGridForScreen() {
 }
 
 function updateBoardMetrics() {
-  // Pick a grid that keeps cells readable on small screens
   chooseGridForScreen();
 
   // Compute uniform (square) cell size
@@ -179,7 +174,7 @@ function touchStarted() {
   const tx = t ? t.x : touchX;
   const ty = t ? t.y : touchY;
 
-  // If the touch is on UI, do NOT block it
+  // If touch is on UI, let UI handle it
   if (isEventOnGUI(tx, ty)) return true;
 
   if (sensorsEnabled) {
@@ -189,9 +184,8 @@ function touchStarted() {
     placeAtCell(gx, gy);
   }
 
-  return false; // prevent page scroll only for canvas interactions
+  return false; // prevent scroll on canvas interaction
 }
-
 
 function placeAtCell(gx, gy) {
   if (!isValidCell(gx, gy)) return;
@@ -206,13 +200,14 @@ function placeAtCell(gx, gy) {
 }
 
 // =====================================================
-// Rendering
+// Rendering: persistent layer (boardLayer)
 // =====================================================
 function paintCell(gx, gy, r, g, b) {
   grid.set(`${gx},${gy}`, { r, g, b });
 
-  fill(r, g, b);
-  rect(
+  // Paint directly onto the persistent layer
+  boardLayer.fill(r, g, b);
+  boardLayer.rect(
     boardOX + gx * cellSize + 1,
     boardOY + gy * cellSize + 1,
     cellSize - 2,
@@ -220,48 +215,56 @@ function paintCell(gx, gy, r, g, b) {
   );
 }
 
-function drawGridLines() {
-  push();
-  stroke(220);
-  strokeWeight(1);
+function drawGridLinesTo(layer) {
+  layer.push();
+  layer.stroke(220);
+  layer.strokeWeight(1);
 
   for (let x = 0; x <= COLS; x++) {
     const px = boardOX + x * cellSize;
-    line(px, boardOY, px, boardOY + boardH);
+    layer.line(px, boardOY, px, boardOY + boardH);
   }
   for (let y = 0; y <= ROWS; y++) {
     const py = boardOY + y * cellSize;
-    line(boardOX, py, boardOX + boardW, py);
+    layer.line(boardOX, py, boardOX + boardW, py);
   }
 
-  pop();
+  layer.pop();
 }
 
-function drawCursorOverlay() {
-  overlay.push();
-  overlay.noFill();
-  overlay.stroke(0, 140);
-  overlay.strokeWeight(3);
-  overlay.rect(
-    boardOX + cursorGX * cellSize + 1,
-    boardOY + cursorGY * cellSize + 1,
-    cellSize - 2,
-    cellSize - 2
-  );
-  overlay.pop();
-}
+function redrawBoardLayer() {
+  boardLayer.clear();
+  boardLayer.background(240);
 
-function redrawAllCells() {
+  // Draw grid
+  drawGridLinesTo(boardLayer);
+
+  // Draw all painted cells
   for (const [key, c] of grid.entries()) {
     const [gx, gy] = key.split(",").map(Number);
-    fill(c.r, c.g, c.b);
-    rect(
+    boardLayer.fill(c.r, c.g, c.b);
+    boardLayer.rect(
       boardOX + gx * cellSize + 1,
       boardOY + gy * cellSize + 1,
       cellSize - 2,
       cellSize - 2
     );
   }
+}
+
+// Cursor is drawn on main canvas only (non-persistent)
+function drawCursor() {
+  push();
+  noFill();
+  stroke(0, 140);
+  strokeWeight(3);
+  rect(
+    boardOX + cursorGX * cellSize + 1,
+    boardOY + cursorGY * cellSize + 1,
+    cellSize - 2,
+    cellSize - 2
+  );
+  pop();
 }
 
 // =====================================================
@@ -282,12 +285,10 @@ function windowResized() {
 
   updateBoardMetrics();
 
-  overlay = createGraphics(windowWidth, windowHeight);
-  overlay.clear();
+  boardLayer = createGraphics(windowWidth, windowHeight);
+  boardLayer.noStroke();
 
-  background(240);
-  drawGridLines();
-  redrawAllCells();
+  redrawBoardLayer();
 }
 
 // =====================================================
@@ -300,6 +301,12 @@ function setupUI() {
   guiEl.classList.add("open");
   guiEl.innerHTML = "";
 
+  // Stop GUI touches/clicks from reaching the canvas (iOS-friendly)
+  guiEl.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+  guiEl.addEventListener("touchend", (e) => e.stopPropagation(), { passive: true });
+  guiEl.addEventListener("mousedown", (e) => e.stopPropagation());
+  guiEl.addEventListener("click", (e) => e.stopPropagation());
+
   // Toggle panel button (uses your CSS .button)
   toggleBtnEl = document.createElement("button");
   toggleBtnEl.className = "button";
@@ -311,11 +318,11 @@ function setupUI() {
   });
   guiEl.appendChild(toggleBtnEl);
 
-  // Motion permission button (iOS)
+  // Motion permission button (tilt only)
   motionBtnEl = document.createElement("button");
   motionBtnEl.id = "motionBtn";
   motionBtnEl.className = "motion-btn";
-  motionBtnEl.textContent = "Enable Motion";
+  motionBtnEl.textContent = "Enable Tilt";
   motionBtnEl.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -387,13 +394,6 @@ function setupUI() {
   });
 
   guiEl.appendChild(paletteEl);
-
-  // Stop touches/clicks on GUI from reaching the canvas (iOS-friendly)
-  guiEl.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
-  guiEl.addEventListener("touchend", (e) => e.stopPropagation(), { passive: true });
-  guiEl.addEventListener("mousedown", (e) => e.stopPropagation());
-  guiEl.addEventListener("click", (e) => e.stopPropagation());
-
 }
 
 function setCurrentColor(hex) {
@@ -404,20 +404,6 @@ function setCurrentColor(hex) {
   const label = document.getElementById("colorLabel");
   if (swatch) swatch.style.background = currentHex;
   if (label) label.textContent = `Selected: ${currentHex.toUpperCase()}`;
-}
-
-function randomizeColorFromPalette() {
-  const idx = Math.floor(Math.random() * PALETTE.length);
-  setCurrentColor(PALETTE[idx]);
-
-  if (paletteEl) {
-    Array.from(paletteEl.children).forEach((child) => (child.style.outline = "none"));
-    const btn = paletteEl.children[idx];
-    if (btn) {
-      btn.style.outline = "2px solid rgba(0,0,0,0.6)";
-      btn.style.outlineOffset = "1px";
-    }
-  }
 }
 
 // Treat any tap/click on DOM inside #gui-container as GUI interaction
@@ -438,14 +424,15 @@ function isEventOnGUI(px, py) {
 }
 
 // =====================================================
-// Motion permission + sensors
+// Motion permission + sensors (tilt only)
 // =====================================================
 async function requestMotionPermission() {
   try {
+    // Some iOS versions gate motion permission here
     if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
       const res = await DeviceMotionEvent.requestPermission();
       if (res !== "granted") {
-        motionBtnEl.textContent = "Motion: Denied";
+        motionBtnEl.textContent = "Tilt: Denied";
         return;
       }
     }
@@ -453,25 +440,24 @@ async function requestMotionPermission() {
     if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
       const res2 = await DeviceOrientationEvent.requestPermission();
       if (res2 !== "granted") {
-        motionBtnEl.textContent = "Orientation: Denied";
+        motionBtnEl.textContent = "Tilt: Denied";
         return;
       }
     }
 
-    enableSensors();
-    motionBtnEl.textContent = "Motion: ON";
+    enableTilt();
+    motionBtnEl.textContent = "Tilt: ON";
   } catch (e) {
     console.warn(e);
-    motionBtnEl.textContent = "Motion: Error";
+    motionBtnEl.textContent = "Tilt: Error";
   }
 }
 
-function enableSensors() {
+function enableTilt() {
   if (sensorsEnabled) return;
   sensorsEnabled = true;
 
   window.addEventListener("deviceorientation", onDeviceOrientation, true);
-  window.addEventListener("devicemotion", onDeviceMotion, true);
 }
 
 function onDeviceOrientation(e) {
@@ -497,23 +483,6 @@ function stepCursorByTilt() {
   cursorGX = constrain(cursorGX + dx, 0, COLS - 1);
   cursorGY = constrain(cursorGY + dy, 0, ROWS - 1);
   lastMoveTime = now;
-}
-
-function onDeviceMotion(e) {
-  const a = e.accelerationIncludingGravity || e.acceleration;
-  if (!a) return;
-
-  const ax = a.x || 0;
-  const ay = a.y || 0;
-  const az = a.z || 0;
-
-  const mag = Math.sqrt(ax * ax + ay * ay + az * az);
-
-  const now = Date.now();
-  if (mag > SHAKE_THRESHOLD && now - lastShakeTime > SHAKE_COOLDOWN_MS) {
-    lastShakeTime = now;
-    randomizeColorFromPalette();
-  }
 }
 
 // =====================================================
