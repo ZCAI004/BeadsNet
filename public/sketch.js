@@ -175,12 +175,12 @@ function mousePressed() {
 }
 
 function touchStarted() {
-  // Use touches[0] for better iOS reliability
   const t = (touches && touches.length > 0) ? touches[0] : null;
   const tx = t ? t.x : touchX;
   const ty = t ? t.y : touchY;
 
-  if (isEventOnGUI(tx, ty)) return false;
+  // If the touch is on UI, do NOT block it
+  if (isEventOnGUI(tx, ty)) return true;
 
   if (sensorsEnabled) {
     placeAtCell(cursorGX, cursorGY);
@@ -189,8 +189,9 @@ function touchStarted() {
     placeAtCell(gx, gy);
   }
 
-  return false; // prevent scroll
+  return false; // prevent page scroll only for canvas interactions
 }
+
 
 function placeAtCell(gx, gy) {
   if (!isValidCell(gx, gy)) return;
@@ -386,6 +387,13 @@ function setupUI() {
   });
 
   guiEl.appendChild(paletteEl);
+
+  // Stop touches/clicks on GUI from reaching the canvas (iOS-friendly)
+  guiEl.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
+  guiEl.addEventListener("touchend", (e) => e.stopPropagation(), { passive: true });
+  guiEl.addEventListener("mousedown", (e) => e.stopPropagation());
+  guiEl.addEventListener("click", (e) => e.stopPropagation());
+
 }
 
 function setCurrentColor(hex) {
