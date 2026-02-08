@@ -1,0 +1,92 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background: white;
+  touch-action: none;
+}
+
+main {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#sketch-container {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+canvas {
+  display: block;
+}
+
+/* GUI panel */
+#gui-container{
+  position: fixed;
+  top: 0;
+  left: -220px;
+  z-index: 100;
+  width: 220px;
+  height: 100%;
+  padding: 10px;
+  box-sizing: border-box;
+  background-color: rgba(217, 215, 215, 0.7);
+  transition: all .3s;
+
+  pointer-events: none;
+}
+
+#gui-container.open{
+  left: 0px;
+  pointer-events: auto;
+}
+
+/* toggle button */
+#gui-container .button{
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  right: -55px;
+  top: 15px;
+  background-color: rgba(217, 215, 215, 0.7);
+  border: transparent;
+  box-sizing: border-box;
+  border-radius: 50%;
+  color: #383643;
+  padding: 0px !important;
+  font-size: 25px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#gui-container .button:hover{
+  color: grey;
+}
+
+#gui-container.open .button{
+  transform: scale(-1,1);
+}
+
+/* Motion permission button */
+.motion-btn{
+  margin-top: 60px;
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.15);
+  background: rgba(255,255,255,0.85);
+  font-size: 14px;
+  cursor: pointer;
+}
+.motion-btn:active{
+  transform: scale(0.99);
+}
